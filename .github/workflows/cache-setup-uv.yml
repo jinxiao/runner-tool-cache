@@ -107,14 +107,16 @@ jobs:
       - name: Pack uv tool cache
         id: pack
         shell: bash
+        working-directory: ${{ runner.tool_cache }}
         run: |
           set -euo pipefail
 
           asset_name="setup-uv-tool-cache-${RUNNER_OS}-${RUNNER_ARCH}-uv-${UV_VERSIONS}.tar.gz"
-          mkdir -p dist
+          asset_path="${GITHUB_WORKSPACE}/dist/${asset_name}"
+          mkdir -p "${GITHUB_WORKSPACE}/dist"
 
-          tar -C "${{ runner.tool_cache }}" -czf "dist/${asset_name}" uv
-          sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
+          tar -czf "${asset_path}" *
+          sha256sum "${asset_path}" > "${asset_path}.sha256"
 
           {
             echo "asset-name=${asset_name}"
@@ -146,7 +148,7 @@ jobs:
 
               tar -C "\${RUNNER_TOOL_CACHE}" -xzf ${{ steps.pack.outputs.asset-name }}
 
-          The archive contains the top-level uv/ tool-cache directory.
+          The archive contains the full contents of the runner tool-cache directory.
           EOF
 
           if gh release view "${release_tag}" >/dev/null 2>&1; then

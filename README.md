@@ -16,6 +16,8 @@ The generated asset is named like:
 setup-uv-tool-cache-Linux-X64-uv-0.11.19-0.11.18-0.11.17.tar.gz
 ```
 
+The archive is created with `${{ runner.tool_cache }}` as the working directory, so it contains the full contents of the runner tool-cache directory after the uv setup steps have populated it.
+
 ## Restore on a GHES private runner
 
 Restore the archive before running `astral-sh/setup-uv`:
@@ -45,4 +47,4 @@ Restore the archive before running `astral-sh/setup-uv`:
     ignore-empty-workdir: true
 ```
 
-The archive contains the top-level `uv/` directory, so it must be extracted directly into `RUNNER_TOOL_CACHE`.
+The archive must be extracted directly into `RUNNER_TOOL_CACHE`.
