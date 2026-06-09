@@ -1,0 +1,157 @@
+name: Release setup-uv tool cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: Release tag to publish to. Defaults to setup-uv-tool-cache-uv-<oldest>-<newest>
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  SETUP_UV_VERSION: "v8.2.0"
+
+jobs:
+  release-setup-uv:
+    name: Release setup-uv tool cache
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve latest uv versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/astral-sh/uv/releases?per_page=20")"
+
+          mapfile -t versions < <(jq -r '
+            [
+              .[]
+              | select(.draft == false and .prerelease == false)
+              | .tag_name
+              | ltrimstr("v")
+            ]
+            | .[:3][]
+          ' <<< "${response}")
+
+          if [ "${#versions[@]}" -ne 3 ]; then
+            echo "Expected 3 uv versions, got ${#versions[@]}" >&2
+            exit 1
+          fi
+
+          {
+            echo "uv_version_1=${versions[0]}"
+            echo "uv_version_2=${versions[1]}"
+            echo "uv_version_3=${versions[2]}"
+            echo "uv_versions=${versions[0]}-${versions[1]}-${versions[2]}"
+            echo "release_range=${versions[2]}-${versions[0]}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "UV_VERSION_1=${versions[0]}"
+            echo "UV_VERSION_2=${versions[1]}"
+            echo "UV_VERSION_3=${versions[2]}"
+            echo "UV_VERSIONS=${versions[0]}-${versions[1]}-${versions[2]}"
+            echo "UV_RELEASE_RANGE=${versions[2]}-${versions[0]}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Clear existing uv tool cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${{ runner.tool_cache }}.old"
+          mv "${{ runner.tool_cache }}" "${{ runner.tool_cache }}.old"
+          mkdir -p "${{ runner.tool_cache }}"
+
+      - name: Install latest uv
+        id: setup-uv-1
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: ${{ steps.versions.outputs.uv_version_1 }}
+          enable-cache: false
+          ignore-empty-workdir: true
+
+      - name: Install previous uv
+        id: setup-uv-2
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: ${{ steps.versions.outputs.uv_version_2 }}
+          enable-cache: false
+          ignore-empty-workdir: true
+
+      - name: Install third latest uv
+        id: setup-uv-3
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: ${{ steps.versions.outputs.uv_version_3 }}
+          enable-cache: false
+          ignore-empty-workdir: true
+
+      - name: List cached uv versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          find "${{ runner.tool_cache }}/uv" -maxdepth 3 -type f -name ".complete" -print | sort
+          uv --version
+
+      - name: Pack uv tool cache
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          asset_name="setup-uv-tool-cache-${RUNNER_OS}-${RUNNER_ARCH}-uv-${UV_VERSIONS}.tar.gz"
+          mkdir -p dist
+
+          tar -C "${{ runner.tool_cache }}" -czf "dist/${asset_name}" uv
+          sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
+
+          {
+            echo "asset-name=${asset_name}"
+            echo "asset-path=dist/${asset_name}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_INPUT: ${{ inputs['release-tag'] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_tag="${RELEASE_TAG_INPUT:-setup-uv-tool-cache-uv-${UV_RELEASE_RANGE}}"
+          release_title="setup-uv tool cache for uv ${UV_VERSION_1}, ${UV_VERSION_2}, ${UV_VERSION_3}"
+
+          cat > release-notes.md <<EOF
+          Prebuilt GitHub Actions runner tool-cache for astral-sh/setup-uv.
+
+          Included uv versions:
+
+          - ${UV_VERSION_1}
+          - ${UV_VERSION_2}
+          - ${UV_VERSION_3}
+
+          Extract the archive into RUNNER_TOOL_CACHE on a compatible runner:
+
+              tar -C "\${RUNNER_TOOL_CACHE}" -xzf ${{ steps.pack.outputs.asset-name }}
+
+          The archive contains the top-level uv/ tool-cache directory.
+          EOF
+
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release upload "${release_tag}" dist/* --clobber
+          else
+            gh release create "${release_tag}" dist/* \
+              --title "${release_title}" \
+              --notes-file release-notes.md
+          fi
