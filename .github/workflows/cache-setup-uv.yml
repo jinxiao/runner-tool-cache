@@ -152,6 +152,9 @@ jobs:
           EOF
 
           if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release edit "${release_tag}" \
+              --title "${release_title}" \
+              --notes-file release-notes.md
             gh release upload "${release_tag}" dist/* --clobber
           else
             gh release create "${release_tag}" dist/* \
